@@ -1,7 +1,9 @@
-﻿import json
-import os
+﻿import io
+import math
 import random
+import struct
 import time
+import wave
 
 import pygame
 
@@ -35,8 +37,77 @@ from .ui import (
 )
 
 
+
+class SimpleSounds:
+    def __init__(self):
+        self.enabled = False
+        self.sfx = {}
+        try:
+            if pygame.mixer.get_init() is None:
+                pygame.mixer.init(44100, -16, 1, 512)
+            self.enabled = True
+            self.sfx = {
+                "click": self._tone(720, 0.04, 0.18),
+                "coin": self._tone(960, 0.10, 0.20),
+                "miss": self._tone(260, 0.12, 0.20),
+                "hit": self._tone(820, 0.10, 0.24),
+                "sunk": self._sweep(700, 1020, 0.18, 0.26),
+                "win": self._sweep(420, 1120, 0.32, 0.26),
+                "lose": self._sweep(580, 180, 0.35, 0.24),
+                "save": self._tone(520, 0.08, 0.22),
+            }
+        except pygame.error:
+            self.enabled = False
+            self.sfx = {}
+
+    def play(self, name):
+        if not self.enabled:
+            return
+        sound = self.sfx.get(name)
+        if sound is not None:
+            sound.play()
+
+    def _tone(self, freq, duration, volume):
+        return self._build_sound(duration, volume, lambda t, _: math.sin(2.0 * math.pi * freq * t))
+
+    def _sweep(self, freq_start, freq_end, duration, volume):
+        def waveform(t, ratio):
+            cur_freq = freq_start + (freq_end - freq_start) * ratio
+            return math.sin(2.0 * math.pi * cur_freq * t)
+
+        return self._build_sound(duration, volume, waveform)
+
+    def _build_sound(self, duration, volume, waveform):
+        sample_rate = 44100
+        sample_count = max(1, int(sample_rate * duration))
+        attack = max(1, int(sample_count * 0.08))
+        release = max(1, int(sample_count * 0.12))
+
+        frames = bytearray()
+        for i in range(sample_count):
+            t = i / sample_rate
+            ratio = i / sample_count
+            amp = waveform(t, ratio)
+            env = 1.0
+            if i < attack:
+                env = i / attack
+            elif i > sample_count - release:
+                env = max(0.0, (sample_count - i) / release)
+            val = int(32767 * volume * env * amp)
+            frames.extend(struct.pack("<h", val))
+
+        with io.BytesIO() as wav_io:
+            with wave.open(wav_io, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(frames)
+            wav_io.seek(0)
+            return pygame.mixer.Sound(file=wav_io)
+
 class Game:
     def __init__(self):
+        pygame.mixer.pre_init(44100, -16, 1, 512)
         pygame.init()
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Морской бой")
@@ -67,6 +138,7 @@ class Game:
         self.shot_anim = None
         self.anim_duration = 0.35
         self.ai_think_delay = 1.0
+        self.sounds = SimpleSounds()
 
     def reset_game(self):
         self.player = Player()
@@ -119,6 +191,7 @@ class Game:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for btn in self.menu_buttons():
                 if btn.is_clicked(event):
+                    self.sounds.play("click")
                     if btn.text == "Новая игра":
                         self.reset_game()
                         self.state = "coin"
@@ -133,6 +206,7 @@ class Game:
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 for btn in self.coin_buttons():
                     if btn.is_clicked(event):
+                        self.sounds.play("coin")
                         self.coin_result = random.choice(["player", "ai"])
                         self.current_turn = self.coin_result
                         self.coin_time = time.time()
@@ -155,6 +229,7 @@ class Game:
                 x, y = target
                 result = self.ai.board.shoot(x, y)
                 self.start_shot_anim("ai", x, y, result)
+                self.play_shot_sound(result)
                 if result in ["hit", "sunk"]:
                     if self.ai.board.all_sunk():
                         self.game_over(player_won=True)
@@ -178,6 +253,7 @@ class Game:
         x, y = shot
         result = self.player.board.shoot(x, y)
         self.start_shot_anim("player", x, y, result)
+        self.play_shot_sound(result)
         if result in ["hit", "sunk"]:
             self.ai.process_result((x, y), result, self.player.board)
             if self.player.board.all_sunk():
@@ -191,6 +267,7 @@ class Game:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for btn in self.scores_buttons():
                 if btn.is_clicked(event):
+                    self.sounds.play("click")
                     if btn.text == "Назад":
                         self.state = "menu"
         return True
@@ -208,6 +285,7 @@ class Game:
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for btn in self.gameover_buttons():
                 if btn.is_clicked(event):
+                    self.sounds.play("click")
                     if btn.text == "Сохранить результат":
                         self.save_result()
                     elif btn.text == "Начать сначала":
@@ -226,6 +304,15 @@ class Game:
         self.player_won = player_won
         self.end_time = time.time()
         self.state = "gameover"
+        self.sounds.play("win" if player_won else "lose")
+
+    def play_shot_sound(self, result):
+        if result == "miss":
+            self.sounds.play("miss")
+        elif result == "hit":
+            self.sounds.play("hit")
+        elif result == "sunk":
+            self.sounds.play("sunk")
 
     def save_result(self):
         if not self.player_won or self.saved:
@@ -236,6 +323,7 @@ class Game:
         elapsed = int(self.end_time - self.start_time)
         self.score_manager.add_record(name, elapsed)
         self.saved = True
+        self.sounds.play("save")
 
     # ------------- Drawing -------------
     def draw(self, mouse_pos):
@@ -457,6 +545,13 @@ class Game:
         grid_x = (x - offset_x) // CELL_SIZE
         grid_y = (y - offset_y) // CELL_SIZE
         return int(grid_x), int(grid_y)
+
+
+
+
+
+
+
 
 
 
