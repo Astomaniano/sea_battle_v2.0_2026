@@ -27,6 +27,9 @@ from .ui import (
     RED,
     GREEN,
     SHIP_GREEN,
+    BG_LEFT,
+    BG_RIGHT,
+    BG_DIVIDER,
     RECORDS_FILE,
     Button,
 )
@@ -236,7 +239,7 @@ class Game:
 
     # ------------- Drawing -------------
     def draw(self, mouse_pos):
-        self.screen.fill(WHITE)
+        self.draw_background()
 
         if self.state == "menu":
             self.draw_menu(mouse_pos)
@@ -249,6 +252,16 @@ class Game:
         elif self.state == "gameover":
             self.draw_gameover(mouse_pos)
 
+    def draw_background(self):
+        self.screen.fill(BG_RIGHT)
+
+        left_width = SCREEN_WIDTH // 2
+        pygame.draw.rect(self.screen, BG_LEFT, (0, 0, left_width, SCREEN_HEIGHT))
+
+        divider_x = left_width
+        pygame.draw.line(self.screen, BG_DIVIDER, (divider_x, 0), (divider_x, SCREEN_HEIGHT), 2)
+        pygame.draw.line(self.screen, (24, 25, 29), (divider_x - 2, 0), (divider_x - 2, SCREEN_HEIGHT), 1)
+        pygame.draw.line(self.screen, (14, 15, 18), (divider_x + 2, 0), (divider_x + 2, SCREEN_HEIGHT), 1)
     def draw_menu(self, mouse_pos):
         title = self.title_font.render("Морской бой", True, BLACK)
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
@@ -404,6 +417,9 @@ class Game:
             rect = pygame.Rect(start_x, row_y, cell * size, cell)
             pygame.draw.rect(self.screen, SHIP_GREEN, rect)
             pygame.draw.rect(self.screen, DARK, rect, 1)
+            for i in range(1, size):
+                divider_x = start_x + i * cell
+                pygame.draw.line(self.screen, DARK, (divider_x, row_y), (divider_x, row_y + cell), 1)
 
             count_text = self.small_font.render(f"={counts[size]}", True, BLACK)
             self.screen.blit(count_text, (start_x + cell * size + 8, row_y + 1))
@@ -441,3 +457,6 @@ class Game:
         grid_x = (x - offset_x) // CELL_SIZE
         grid_y = (y - offset_y) // CELL_SIZE
         return int(grid_x), int(grid_y)
+
+
+

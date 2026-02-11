@@ -16,15 +16,18 @@ FPS = 60
 
 RECORDS_FILE = "records.json"
 
-WHITE = (245, 245, 245)
-BLACK = (20, 20, 20)
-GRAY = (170, 170, 170)
-LIGHT_GRAY = (210, 210, 210)
-BLUE = (70, 120, 200)
-RED = (200, 60, 60)
-GREEN = (70, 160, 90)
-SHIP_GREEN = (140, 200, 160)
-DARK = (50, 50, 50)
+WHITE = (17, 18, 22)
+BLACK = (228, 231, 236)
+GRAY = (56, 59, 66)
+LIGHT_GRAY = (44, 47, 54)
+BLUE = (98, 150, 232)
+RED = (208, 84, 84)
+GREEN = (110, 196, 140)
+SHIP_GREEN = (124, 188, 148)
+DARK = (96, 102, 114)
+BG_LEFT = (31, 32, 36)
+BG_RIGHT = (19, 20, 24)
+BG_DIVIDER = (44, 46, 52)
 
 
 class Button:
@@ -47,3 +50,4 @@ class Button:
 
     def is_clicked(self, event):
         return event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.rect.collidepoint(event.pos)
+
