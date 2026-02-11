@@ -57,6 +57,8 @@ class AIPlayer(Player):
 
         xs = {c[0] for c in self.current_hits}
         ys = {c[1] for c in self.current_hits}
+        # Once orientation is known, discard stale perpendicular candidates.
+        self.target_queue = []
         if len(xs) == 1:
             x = next(iter(xs))
             min_y = min(ys)
@@ -73,3 +75,4 @@ class AIPlayer(Player):
                 if enemy_board.in_bounds(nx, y) and enemy_board.shots[y][nx] == 0:
                     if (nx, y) not in self.target_queue:
                         self.target_queue.append((nx, y))
+

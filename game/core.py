@@ -1,41 +1,75 @@
 ﻿import io
 import math
+import os
 import random
 import struct
+import sys
 import time
 import wave
 
 import pygame
 
-from .ai import Player, AIPlayer
-from .board import Board
-from .scores import ScoreManager
-from .ui import (
-    SCREEN_WIDTH,
-    SCREEN_HEIGHT,
-    FPS,
-    MARGIN,
-    GAP,
-    TOP,
-    BOARD_SIZE,
-    GRID_SIZE,
-    CELL_SIZE,
-    WHITE,
-    BLACK,
-    LIGHT_GRAY,
-    DARK,
-    GRAY,
-    BLUE,
-    RED,
-    GREEN,
-    SHIP_GREEN,
-    BG_LEFT,
-    BG_RIGHT,
-    BG_DIVIDER,
-    RECORDS_FILE,
-    Button,
-)
+try:
+    from .ai import Player, AIPlayer
+    from .scores import ScoreManager
+    from .ui import (
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        FPS,
+        MARGIN,
+        GAP,
+        TOP,
+        BOARD_SIZE,
+        GRID_SIZE,
+        CELL_SIZE,
+        WHITE,
+        BLACK,
+        LIGHT_GRAY,
+        DARK,
+        GRAY,
+        BLUE,
+        RED,
+        GREEN,
+        SHIP_GREEN,
+        BG_LEFT,
+        BG_RIGHT,
+        BG_DIVIDER,
+        RECORDS_FILE,
+        Button,
+    )
+except ImportError:
+    # Allow running this file directly: python game/core.py
+    this_dir = os.path.dirname(__file__)
+    if this_dir not in sys.path:
+        sys.path.insert(0, this_dir)
 
+    from ai import Player, AIPlayer
+    from scores import ScoreManager
+    from ui import (
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT,
+        FPS,
+        MARGIN,
+        GAP,
+        TOP,
+        BOARD_SIZE,
+        GRID_SIZE,
+        CELL_SIZE,
+        WHITE,
+        BLACK,
+        LIGHT_GRAY,
+        DARK,
+        GRAY,
+        BLUE,
+        RED,
+        GREEN,
+        SHIP_GREEN,
+        BG_LEFT,
+        BG_RIGHT,
+        BG_DIVIDER,
+        RECORDS_FILE,
+        Button,
+    )
 
 
 class SimpleSounds:
@@ -63,47 +97,48 @@ class SimpleSounds:
     def play(self, name):
         if not self.enabled:
             return
-        sound = self.sfx.get(name)
-        if sound is not None:
-            sound.play()
+        snd = self.sfx.get(name)
+        if snd is not None:
+            snd.play()
 
     def _tone(self, freq, duration, volume):
         return self._build_sound(duration, volume, lambda t, _: math.sin(2.0 * math.pi * freq * t))
 
-    def _sweep(self, freq_start, freq_end, duration, volume):
-        def waveform(t, ratio):
-            cur_freq = freq_start + (freq_end - freq_start) * ratio
-            return math.sin(2.0 * math.pi * cur_freq * t)
+    def _sweep(self, f0, f1, duration, volume):
+        def wave_fn(t, ratio):
+            cur = f0 + (f1 - f0) * ratio
+            return math.sin(2.0 * math.pi * cur * t)
 
-        return self._build_sound(duration, volume, waveform)
+        return self._build_sound(duration, volume, wave_fn)
 
-    def _build_sound(self, duration, volume, waveform):
+    def _build_sound(self, duration, volume, wave_fn):
         sample_rate = 44100
-        sample_count = max(1, int(sample_rate * duration))
-        attack = max(1, int(sample_count * 0.08))
-        release = max(1, int(sample_count * 0.12))
+        samples = max(1, int(sample_rate * duration))
+        attack = max(1, int(samples * 0.08))
+        release = max(1, int(samples * 0.12))
 
         frames = bytearray()
-        for i in range(sample_count):
+        for i in range(samples):
             t = i / sample_rate
-            ratio = i / sample_count
-            amp = waveform(t, ratio)
+            ratio = i / samples
+            amp = wave_fn(t, ratio)
             env = 1.0
             if i < attack:
                 env = i / attack
-            elif i > sample_count - release:
-                env = max(0.0, (sample_count - i) / release)
+            elif i > samples - release:
+                env = max(0.0, (samples - i) / release)
             val = int(32767 * volume * env * amp)
             frames.extend(struct.pack("<h", val))
 
-        with io.BytesIO() as wav_io:
-            with wave.open(wav_io, "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(sample_rate)
-                wav_file.writeframes(frames)
-            wav_io.seek(0)
-            return pygame.mixer.Sound(file=wav_io)
+        with io.BytesIO() as buff:
+            with wave.open(buff, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(sample_rate)
+                wf.writeframes(frames)
+            buff.seek(0)
+            return pygame.mixer.Sound(file=buff)
+
 
 class Game:
     def __init__(self):
@@ -112,55 +147,67 @@ class Game:
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
         pygame.display.set_caption("Морской бой")
         self.clock = pygame.time.Clock()
+
         self.font = pygame.font.SysFont("arial", 24)
         self.small_font = pygame.font.SysFont("arial", 18)
         self.title_font = pygame.font.SysFont("arial", 40, bold=True)
         self.timer_font = pygame.font.SysFont("arial", 28, bold=True)
 
         self.score_manager = ScoreManager(RECORDS_FILE)
-        self.state = "menu"
+        self.sounds = SimpleSounds()
 
+        self.state = "menu"
         self.player = Player()
         self.ai = AIPlayer()
-        self.current_turn = "player"
 
+        self.current_turn = "player"
         self.coin_result = None
         self.coin_time = None
 
         self.start_time = None
         self.end_time = None
-
         self.name_input = ""
         self.saved = False
 
-        self.ai_next_action = 0
+        self.ai_next_action = 0.0
         self.player_won = False
+
         self.shot_anim = None
         self.anim_duration = 0.35
         self.ai_think_delay = 1.0
-        self.sounds = SimpleSounds()
+
+        self.scores_scroll = 0
+        self.max_name_len = 20
+        self.name_limit_warning_until = 0.0
 
     def reset_game(self):
         self.player = Player()
         self.ai = AIPlayer()
         self.player.board.place_ships_auto()
         self.ai.board.place_ships_auto()
+
         self.current_turn = "player"
         self.coin_result = None
         self.coin_time = None
+
         self.start_time = None
         self.end_time = None
         self.name_input = ""
         self.saved = False
-        self.ai_next_action = 0
+
+        self.ai_next_action = 0.0
         self.player_won = False
         self.shot_anim = None
+
+        self.scores_scroll = 0
+        self.name_limit_warning_until = 0.0
 
     def run(self):
         running = True
         while running:
             self.clock.tick(FPS)
             mouse_pos = pygame.mouse.get_pos()
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -186,7 +233,7 @@ class Game:
 
         pygame.quit()
 
-    # ------------- State Handlers -------------
+    # ---------- State handlers ----------
     def handle_menu(self, event):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             for btn in self.menu_buttons():
@@ -196,28 +243,27 @@ class Game:
                         self.reset_game()
                         self.state = "coin"
                     elif btn.text == "Рекорды":
+                        self.scores_scroll = 0
                         self.state = "scores"
                     elif btn.text == "Выход":
                         return False
         return True
 
     def handle_coin(self, event):
-        if self.coin_result is None:
-            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                for btn in self.coin_buttons():
-                    if btn.is_clicked(event):
-                        self.sounds.play("coin")
-                        self.coin_result = random.choice(["player", "ai"])
-                        self.current_turn = self.coin_result
-                        self.coin_time = time.time()
+        if self.coin_result is None and event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            for btn in self.coin_buttons():
+                if btn.is_clicked(event):
+                    self.sounds.play("coin")
+                    self.coin_result = random.choice(["player", "ai"])
+                    self.current_turn = self.coin_result
+                    self.coin_time = time.time()
         return True
 
     def update_coin(self):
-        if self.coin_result is not None:
-            if time.time() - self.coin_time > 1.2:
-                self.state = "play"
-                if self.start_time is None:
-                    self.start_time = time.time()
+        if self.coin_result is not None and time.time() - self.coin_time > 1.2:
+            self.state = "play"
+            if self.start_time is None:
+                self.start_time = time.time()
 
     def handle_play(self, event):
         if self.current_turn != "player":
@@ -225,35 +271,38 @@ class Game:
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             target = self.cell_from_click(event.pos, enemy=True)
-            if target:
-                x, y = target
-                result = self.ai.board.shoot(x, y)
-                self.start_shot_anim("ai", x, y, result)
-                self.play_shot_sound(result)
-                if result in ["hit", "sunk"]:
-                    if self.ai.board.all_sunk():
-                        self.game_over(player_won=True)
-                elif result == "miss":
-                    self.current_turn = "ai"
-                    self.ai_next_action = time.time() + self.ai_think_delay
+            if target is None:
+                return True
+            x, y = target
+            result = self.ai.board.shoot(x, y)
+            self.start_shot_anim("ai", x, y, result)
+            self.play_shot_sound(result)
+
+            if result in ["hit", "sunk"]:
+                if self.ai.board.all_sunk():
+                    self.game_over(player_won=True)
+            elif result == "miss":
+                self.current_turn = "ai"
+                self.ai_next_action = time.time() + self.ai_think_delay
         return True
 
     def update_play(self):
         if self.current_turn != "ai":
             return
 
-        now = time.time()
-        if now < self.ai_next_action:
+        if time.time() < self.ai_next_action:
             return
 
         shot = self.ai.choose_shot(self.player.board)
         if shot is None:
             self.current_turn = "player"
             return
+
         x, y = shot
         result = self.player.board.shoot(x, y)
         self.start_shot_anim("player", x, y, result)
         self.play_shot_sound(result)
+
         if result in ["hit", "sunk"]:
             self.ai.process_result((x, y), result, self.player.board)
             if self.player.board.all_sunk():
@@ -264,12 +313,28 @@ class Game:
             self.current_turn = "player"
 
     def handle_scores(self, event):
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            for btn in self.scores_buttons():
-                if btn.is_clicked(event):
-                    self.sounds.play("click")
-                    if btn.text == "Назад":
-                        self.state = "menu"
+        if event.type == pygame.MOUSEWHEEL:
+            self.scores_scroll -= event.y
+
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 4:
+                self.scores_scroll -= 1
+            elif event.button == 5:
+                self.scores_scroll += 1
+            elif event.button == 1:
+                for btn in self.scores_buttons():
+                    if btn.is_clicked(event):
+                        self.sounds.play("click")
+                        if btn.text == "Назад":
+                            self.state = "menu"
+
+        records = self.score_manager.records
+        row_h = 32
+        list_top = 132
+        list_bottom = SCREEN_HEIGHT - 130
+        visible = max(1, (list_bottom - list_top) // row_h)
+        max_scroll = max(0, len(records) - visible)
+        self.scores_scroll = max(0, min(self.scores_scroll, max_scroll))
         return True
 
     def handle_gameover(self, event):
@@ -277,21 +342,29 @@ class Game:
             if event.key == pygame.K_BACKSPACE:
                 self.name_input = self.name_input[:-1]
             elif event.key == pygame.K_RETURN:
+                self.sounds.play("click")
                 self.save_result()
             else:
-                if len(self.name_input) < 12 and event.unicode.isprintable() and event.unicode != "\t":
-                    self.name_input += event.unicode
+                if event.unicode.isprintable() and event.unicode != "\t":
+                    if len(self.name_input) < self.max_name_len:
+                        self.name_input += event.unicode
+                    else:
+                        self.name_limit_warning_until = time.time() + 1.6
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.player_won and self.gameover_ok_button().is_clicked(event):
+                self.sounds.play("click")
+                self.save_result()
+                return True
+
             for btn in self.gameover_buttons():
                 if btn.is_clicked(event):
                     self.sounds.play("click")
-                    if btn.text == "Сохранить результат":
-                        self.save_result()
-                    elif btn.text == "Начать сначала":
+                    if btn.text == "Начать сначала":
                         self.reset_game()
                         self.state = "coin"
                     elif btn.text == "Рекорды":
+                        self.scores_scroll = 0
                         self.state = "scores"
                     elif btn.text == "Главное меню":
                         self.state = "menu"
@@ -299,7 +372,7 @@ class Game:
                         return False
         return True
 
-    # ------------- Actions -------------
+    # ---------- Actions ----------
     def game_over(self, player_won):
         self.player_won = player_won
         self.end_time = time.time()
@@ -325,7 +398,7 @@ class Game:
         self.saved = True
         self.sounds.play("save")
 
-    # ------------- Drawing -------------
+    # ---------- Drawing ----------
     def draw(self, mouse_pos):
         self.draw_background(play_state=self.state == "play")
 
@@ -345,7 +418,6 @@ class Game:
             self.screen.fill(BG_RIGHT)
             left_width = SCREEN_WIDTH // 2
             pygame.draw.rect(self.screen, BG_LEFT, (0, 0, left_width, SCREEN_HEIGHT))
-
             divider_x = left_width
             pygame.draw.line(self.screen, BG_DIVIDER, (divider_x, 0), (divider_x, SCREEN_HEIGHT), 2)
             pygame.draw.line(self.screen, (24, 25, 29), (divider_x - 2, 0), (divider_x - 2, SCREEN_HEIGHT), 1)
@@ -354,13 +426,11 @@ class Game:
 
         side_width = SCREEN_WIDTH // 4
         center_width = SCREEN_WIDTH // 2
-
         self.screen.fill(BG_LEFT)
         pygame.draw.rect(self.screen, BG_RIGHT, (side_width, 0, center_width, SCREEN_HEIGHT))
 
         left_edge = side_width
         right_edge = side_width + center_width
-
         pygame.draw.line(self.screen, BG_DIVIDER, (left_edge, 0), (left_edge, SCREEN_HEIGHT), 2)
         pygame.draw.line(self.screen, BG_DIVIDER, (right_edge, 0), (right_edge, SCREEN_HEIGHT), 2)
         pygame.draw.line(self.screen, (24, 25, 29), (left_edge - 2, 0), (left_edge - 2, SCREEN_HEIGHT), 1)
@@ -375,7 +445,6 @@ class Game:
     def draw_coin(self, mouse_pos):
         title = self.title_font.render("Бросок монетки", True, BLACK)
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
-
         if self.coin_result is None:
             for btn in self.coin_buttons():
                 btn.draw(self.screen, mouse_pos)
@@ -387,10 +456,8 @@ class Game:
 
     def draw_play(self, mouse_pos):
         elapsed = int((self.end_time or time.time()) - self.start_time) if self.start_time else 0
-        minutes = elapsed // 60
-        seconds = elapsed % 60
-        timer_title = self.timer_font.render(f"{minutes:02d}:{seconds:02d}", True, BLACK)
-        self.screen.blit(timer_title, timer_title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
+        timer = self.timer_font.render(f"{elapsed // 60:02d}:{elapsed % 60:02d}", True, BLACK)
+        self.screen.blit(timer, timer.get_rect(center=(SCREEN_WIDTH // 2, 40)))
 
         self.draw_board(self.player.board, MARGIN, TOP, show_ships=True)
         self.draw_board(self.ai.board, MARGIN + BOARD_SIZE + GAP, TOP, show_ships=False)
@@ -406,19 +473,50 @@ class Game:
 
     def draw_scores(self, mouse_pos):
         title = self.title_font.render("Рекорды", True, BLACK)
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 68)))
 
-        y = 120
-        if not self.score_manager.records:
+        center_left = SCREEN_WIDTH // 4
+        center_width = SCREEN_WIDTH // 2
+        table_x = center_left + 24
+        table_w = center_width - 48
+
+        col_num = table_x + 10
+        col_time = table_x + 70
+        col_name = table_x + 190
+
+        list_top = 132
+        list_bottom = SCREEN_HEIGHT - 130
+        row_h = 32
+
+        self.screen.blit(self.small_font.render("№", True, BLACK), (col_num, list_top - 30))
+        self.screen.blit(self.small_font.render("Time", True, BLACK), (col_time, list_top - 30))
+        self.screen.blit(self.small_font.render("Name", True, BLACK), (col_name, list_top - 30))
+        pygame.draw.line(self.screen, DARK, (table_x, list_top - 8), (table_x + table_w, list_top - 8), 1)
+
+        records = self.score_manager.records
+        visible = max(1, (list_bottom - list_top) // row_h)
+        max_scroll = max(0, len(records) - visible)
+        self.scores_scroll = max(0, min(self.scores_scroll, max_scroll))
+
+        if not records:
             text = self.font.render("Пока нет рекордов", True, BLACK)
-            self.screen.blit(text, text.get_rect(center=(SCREEN_WIDTH // 2, y)))
-            y += 40
+            self.screen.blit(text, text.get_rect(center=(SCREEN_WIDTH // 2, list_top + 24)))
         else:
-            for idx, record in enumerate(self.score_manager.records, 1):
-                line = f"{idx}. {record['name']} — {record['time']} c"
-                text = self.font.render(line, True, BLACK)
-                self.screen.blit(text, (SCREEN_WIDTH // 2 - 180, y))
-                y += 30
+            start = self.scores_scroll
+            end = min(len(records), start + visible)
+            y = list_top
+            for i in range(start, end):
+                rec = records[i]
+                time_val = rec.get("time") or self.score_manager.format_time(rec.get("seconds", 0))
+                name_val = str(rec.get("name", ""))
+                self.screen.blit(self.small_font.render(str(i + 1), True, BLACK), (col_num, y))
+                self.screen.blit(self.small_font.render(time_val, True, BLACK), (col_time, y))
+                self.screen.blit(self.small_font.render(name_val, True, BLACK), (col_name, y))
+                y += row_h
+
+            if max_scroll > 0:
+                hint = self.small_font.render("Колесо мыши: прокрутка", True, DARK)
+                self.screen.blit(hint, (table_x, SCREEN_HEIGHT - 124))
 
         for btn in self.scores_buttons():
             btn.draw(self.screen, mouse_pos)
@@ -427,19 +525,28 @@ class Game:
         result = "WINNER" if self.player_won else "LOSER"
         color = GREEN if self.player_won else RED
         title = self.title_font.render(result, True, color)
-        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
+        self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 68)))
 
         if self.player_won:
+            input_rect = self.gameover_input_rect()
             prompt = self.font.render("Введите имя:", True, BLACK)
-            self.screen.blit(prompt, (SCREEN_WIDTH // 2 - 120, 110))
-            input_rect = pygame.Rect(SCREEN_WIDTH // 2 - 120, 140, 240, 36)
+            self.screen.blit(prompt, (input_rect.x, 118))
+
             pygame.draw.rect(self.screen, WHITE, input_rect)
             pygame.draw.rect(self.screen, BLACK, input_rect, 2)
             name_surf = self.font.render(self.name_input, True, BLACK)
             self.screen.blit(name_surf, (input_rect.x + 8, input_rect.y + 6))
+
+            ok_btn = self.gameover_ok_button()
+            ok_btn.draw(self.screen, mouse_pos)
+
             if self.saved:
-                saved_text = self.font.render("Сохранено", True, GREEN)
-                self.screen.blit(saved_text, (SCREEN_WIDTH // 2 - 60, 185))
+                saved = self.small_font.render("Результат записан", True, GREEN)
+                self.screen.blit(saved, saved.get_rect(midtop=(SCREEN_WIDTH // 2, input_rect.bottom + 8)))
+
+            if time.time() < self.name_limit_warning_until:
+                warn = self.small_font.render(f"Лимит имени: {self.max_name_len} символов", True, RED)
+                self.screen.blit(warn, warn.get_rect(midtop=(SCREEN_WIDTH // 2, input_rect.bottom + 32)))
 
         for btn in self.gameover_buttons():
             btn.draw(self.screen, mouse_pos)
@@ -455,7 +562,6 @@ class Game:
                     pygame.draw.rect(self.screen, SHIP_GREEN, rect)
 
                 handled = self.draw_shot_anim(board, x, y, rect)
-
                 if board.shots[y][x] == 1:
                     pygame.draw.circle(self.screen, BLUE, rect.center, 4)
                 elif board.shots[y][x] == 2 and not handled:
@@ -482,6 +588,7 @@ class Game:
     def draw_shot_anim(self, board, x, y, rect):
         if not self.shot_anim:
             return False
+
         target_board = self.player.board if self.shot_anim["target"] == "player" else self.ai.board
         if board is not target_board:
             return False
@@ -510,39 +617,38 @@ class Game:
         sizes = [4, 3, 2, 1]
         cell = max(10, CELL_SIZE // 2)
         row_h = cell + 8
-        start_x = offset_x
-        row_index = 0
 
+        row_index = 0
         for size in sizes:
             if counts[size] <= 0:
                 continue
             row_y = y + row_index * row_h
             row_index += 1
-            rect = pygame.Rect(start_x, row_y, cell * size, cell)
+
+            rect = pygame.Rect(offset_x, row_y, cell * size, cell)
             pygame.draw.rect(self.screen, SHIP_GREEN, rect)
             pygame.draw.rect(self.screen, DARK, rect, 1)
             for i in range(1, size):
-                divider_x = start_x + i * cell
-                pygame.draw.line(self.screen, DARK, (divider_x, row_y), (divider_x, row_y + cell), 1)
+                x = offset_x + i * cell
+                pygame.draw.line(self.screen, DARK, (x, row_y), (x, row_y + cell), 1)
 
             count_text = self.small_font.render(f"={counts[size]}", True, BLACK)
-            self.screen.blit(count_text, (start_x + cell * size + 8, row_y + 1))
+            self.screen.blit(count_text, (offset_x + cell * size + 8, row_y + 1))
 
-    # ------------- UI Helpers -------------
+    # ---------- UI helpers ----------
     def _distributed_buttons(self, labels, y_start, y_end, width=280, height=50):
         if not labels:
             return []
-
         total_h = len(labels) * height
         free_h = max(0, y_end - y_start - total_h)
         gap = free_h // (len(labels) - 1) if len(labels) > 1 else 0
 
         x = SCREEN_WIDTH // 2 - width // 2
-        buttons = []
+        out = []
         for i, label in enumerate(labels):
             y = y_start + i * (height + gap)
-            buttons.append(Button((x, y, width, height), label, self.font))
-        return buttons
+            out.append(Button((x, y, width, height), label, self.font))
+        return out
 
     def menu_buttons(self):
         return self._distributed_buttons(["Новая игра", "Рекорды", "Выход"], y_start=170, y_end=430, width=280)
@@ -551,15 +657,28 @@ class Game:
         return self._distributed_buttons(["Бросить монетку"], y_start=230, y_end=320, width=300)
 
     def scores_buttons(self):
-        return self._distributed_buttons(["Назад"], y_start=500, y_end=560, width=240)
+        return self._distributed_buttons(["Назад"], y_start=470, y_end=530, width=240)
+
+    def gameover_input_rect(self):
+        center_left = SCREEN_WIDTH // 4
+        center_right = center_left + SCREEN_WIDTH // 2
+
+        input_w = 220
+        ok_w = 52
+        gap = 8
+        total_w = input_w + gap + ok_w
+
+        start_x = center_left + (center_right - center_left - total_w) // 2
+        return pygame.Rect(start_x, 148, input_w, 42)
+
+    def gameover_ok_button(self):
+        r = self.gameover_input_rect()
+        return Button((r.right + 8, r.y, 52, r.height), "OK", self.small_font, bg=SHIP_GREEN, fg=BG_RIGHT)
 
     def gameover_buttons(self):
         labels = ["Начать сначала", "Рекорды", "Главное меню", "Выход"]
-        y_start = 200
-        if self.player_won:
-            labels = ["Сохранить результат"] + labels
-            y_start = 230
-        return self._distributed_buttons(labels, y_start=y_start, y_end=560, width=320)
+        y_start = 250 if self.player_won else 190
+        return self._distributed_buttons(labels, y_start=y_start, y_end=500, width=320)
 
     def cell_from_click(self, pos, enemy):
         offset_x = MARGIN + BOARD_SIZE + GAP if enemy else MARGIN
@@ -567,17 +686,10 @@ class Game:
         x, y = pos
         if not (offset_x <= x < offset_x + BOARD_SIZE and offset_y <= y < offset_y + BOARD_SIZE):
             return None
-        grid_x = (x - offset_x) // CELL_SIZE
-        grid_y = (y - offset_y) // CELL_SIZE
-        return int(grid_x), int(grid_y)
+        gx = (x - offset_x) // CELL_SIZE
+        gy = (y - offset_y) // CELL_SIZE
+        return int(gx), int(gy)
 
 
-
-
-
-
-
-
-
-
-
+if __name__ == "__main__":
+    Game().run()
