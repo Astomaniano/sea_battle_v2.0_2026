@@ -327,7 +327,7 @@ class Game:
 
     # ------------- Drawing -------------
     def draw(self, mouse_pos):
-        self.draw_background()
+        self.draw_background(play_state=self.state == "play")
 
         if self.state == "menu":
             self.draw_menu(mouse_pos)
@@ -340,16 +340,32 @@ class Game:
         elif self.state == "gameover":
             self.draw_gameover(mouse_pos)
 
-    def draw_background(self):
-        self.screen.fill(BG_RIGHT)
+    def draw_background(self, play_state=False):
+        if play_state:
+            self.screen.fill(BG_RIGHT)
+            left_width = SCREEN_WIDTH // 2
+            pygame.draw.rect(self.screen, BG_LEFT, (0, 0, left_width, SCREEN_HEIGHT))
 
-        left_width = SCREEN_WIDTH // 2
-        pygame.draw.rect(self.screen, BG_LEFT, (0, 0, left_width, SCREEN_HEIGHT))
+            divider_x = left_width
+            pygame.draw.line(self.screen, BG_DIVIDER, (divider_x, 0), (divider_x, SCREEN_HEIGHT), 2)
+            pygame.draw.line(self.screen, (24, 25, 29), (divider_x - 2, 0), (divider_x - 2, SCREEN_HEIGHT), 1)
+            pygame.draw.line(self.screen, (14, 15, 18), (divider_x + 2, 0), (divider_x + 2, SCREEN_HEIGHT), 1)
+            return
 
-        divider_x = left_width
-        pygame.draw.line(self.screen, BG_DIVIDER, (divider_x, 0), (divider_x, SCREEN_HEIGHT), 2)
-        pygame.draw.line(self.screen, (24, 25, 29), (divider_x - 2, 0), (divider_x - 2, SCREEN_HEIGHT), 1)
-        pygame.draw.line(self.screen, (14, 15, 18), (divider_x + 2, 0), (divider_x + 2, SCREEN_HEIGHT), 1)
+        side_width = SCREEN_WIDTH // 4
+        center_width = SCREEN_WIDTH // 2
+
+        self.screen.fill(BG_LEFT)
+        pygame.draw.rect(self.screen, BG_RIGHT, (side_width, 0, center_width, SCREEN_HEIGHT))
+
+        left_edge = side_width
+        right_edge = side_width + center_width
+
+        pygame.draw.line(self.screen, BG_DIVIDER, (left_edge, 0), (left_edge, SCREEN_HEIGHT), 2)
+        pygame.draw.line(self.screen, BG_DIVIDER, (right_edge, 0), (right_edge, SCREEN_HEIGHT), 2)
+        pygame.draw.line(self.screen, (24, 25, 29), (left_edge - 2, 0), (left_edge - 2, SCREEN_HEIGHT), 1)
+        pygame.draw.line(self.screen, (24, 25, 29), (right_edge + 2, 0), (right_edge + 2, SCREEN_HEIGHT), 1)
+
     def draw_menu(self, mouse_pos):
         title = self.title_font.render("Морской бой", True, BLACK)
         self.screen.blit(title, title.get_rect(center=(SCREEN_WIDTH // 2, 40)))
@@ -513,28 +529,37 @@ class Game:
             self.screen.blit(count_text, (start_x + cell * size + 8, row_y + 1))
 
     # ------------- UI Helpers -------------
+    def _distributed_buttons(self, labels, y_start, y_end, width=280, height=50):
+        if not labels:
+            return []
+
+        total_h = len(labels) * height
+        free_h = max(0, y_end - y_start - total_h)
+        gap = free_h // (len(labels) - 1) if len(labels) > 1 else 0
+
+        x = SCREEN_WIDTH // 2 - width // 2
+        buttons = []
+        for i, label in enumerate(labels):
+            y = y_start + i * (height + gap)
+            buttons.append(Button((x, y, width, height), label, self.font))
+        return buttons
+
     def menu_buttons(self):
-        return [
-            Button((SCREEN_WIDTH // 2 - 120, 140, 240, 50), "Новая игра", self.font),
-            Button((SCREEN_WIDTH // 2 - 120, 210, 240, 50), "Рекорды", self.font),
-            Button((SCREEN_WIDTH // 2 - 120, 280, 240, 50), "Выход", self.font),
-        ]
+        return self._distributed_buttons(["Новая игра", "Рекорды", "Выход"], y_start=170, y_end=430, width=280)
 
     def coin_buttons(self):
-        return [Button((SCREEN_WIDTH // 2 - 140, 140, 280, 50), "Бросить монетку", self.font)]
+        return self._distributed_buttons(["Бросить монетку"], y_start=230, y_end=320, width=300)
 
     def scores_buttons(self):
-        return [Button((SCREEN_WIDTH // 2 - 120, SCREEN_HEIGHT - 90, 240, 50), "Назад", self.font)]
+        return self._distributed_buttons(["Назад"], y_start=500, y_end=560, width=240)
 
     def gameover_buttons(self):
-        buttons = []
+        labels = ["Начать сначала", "Рекорды", "Главное меню", "Выход"]
+        y_start = 200
         if self.player_won:
-            buttons.append(Button((SCREEN_WIDTH // 2 - 160, 220, 320, 50), "Сохранить результат", self.font))
-        buttons.append(Button((SCREEN_WIDTH // 2 - 140, 300, 280, 50), "Начать сначала", self.font))
-        buttons.append(Button((SCREEN_WIDTH // 2 - 140, 370, 280, 50), "Рекорды", self.font))
-        buttons.append(Button((SCREEN_WIDTH // 2 - 140, 440, 280, 50), "Главное меню", self.font))
-        buttons.append(Button((SCREEN_WIDTH // 2 - 140, 510, 280, 50), "Выход", self.font))
-        return buttons
+            labels = ["Сохранить результат"] + labels
+            y_start = 230
+        return self._distributed_buttons(labels, y_start=y_start, y_end=560, width=320)
 
     def cell_from_click(self, pos, enemy):
         offset_x = MARGIN + BOARD_SIZE + GAP if enemy else MARGIN
@@ -545,6 +570,7 @@ class Game:
         grid_x = (x - offset_x) // CELL_SIZE
         grid_y = (y - offset_y) // CELL_SIZE
         return int(grid_x), int(grid_y)
+
 
 
 
